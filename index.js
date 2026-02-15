@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 require('dotenv').config();
-const { MongoClient, ServerApiVersion } = require('mongodb');
+const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 
 const port = process.env.PORT || 5000;
 
@@ -29,6 +29,7 @@ async function run() {
 
     const database = client.db('missionscic11DB');
     const userCollections = database.collection('users');
+    const donationRequestsCollection = database.collection('donationRequests');
 
     // ==================== USER REGISTRATION ROUTE ====================
     app.post('/users', async (req, res) => {
@@ -62,8 +63,8 @@ async function run() {
           bloodGroup: user.bloodGroup,
           district: user.district,
           upazila: user.upazila,
-          role: user.role || "donor", // ✅ Default role
-          status: user.status || "active", // ✅ Default status
+          role: user.role || "donor",
+          status: user.status || "active",
           createdAt: new Date()
         };
 
@@ -144,6 +145,42 @@ async function run() {
       }
     });
 
+    // ==================== UPDATE USER PROFILE ====================
+    app.put('/users/:email', async (req, res) => {
+      try {
+        const email = req.params.email;
+        const updateData = req.body;
+
+        // Don't allow email or role updates through this route
+        delete updateData.email;
+        delete updateData.role;
+        delete updateData.status;
+
+        const result = await userCollections.updateOne(
+          { email: email },
+          { $set: updateData }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).send({
+            success: false,
+            message: "User not found"
+          });
+        }
+
+        res.send({
+          success: true,
+          message: "Profile updated successfully"
+        });
+      } catch (error) {
+        console.error('❌ Error updating profile:', error);
+        res.status(500).send({
+          success: false,
+          error: "Failed to update profile"
+        });
+      }
+    });
+
     // ==================== UPDATE USER STATUS (Block/Unblock) ====================
     app.patch('/users/:email/status', async (req, res) => {
       try {
@@ -202,6 +239,193 @@ async function run() {
         res.status(500).send({ 
           success: false,
           error: "Failed to update user role" 
+        });
+      }
+    });
+
+    // ==================== CREATE DONATION REQUEST ====================
+    app.post('/donation-requests', async (req, res) => {
+      try {
+        const request = req.body;
+        console.log('📥 Received donation request:', request);
+
+        const newRequest = {
+          ...request,
+          status: 'pending',
+          createdAt: new Date(),
+        };
+
+        const result = await donationRequestsCollection.insertOne(newRequest);
+        console.log('✅ Donation request created:', result);
+
+        res.status(201).send({
+          success: true,
+          message: "Donation request created successfully",
+          data: result
+        });
+
+      } catch (error) {
+        console.error('❌ Error creating donation request:', error);
+        res.status(500).send({
+          success: false,
+          message: "Failed to create donation request",
+          error: error.message
+        });
+      }
+    });
+
+    // ==================== GET ALL DONATION REQUESTS ====================
+    app.get('/donation-requests', async (req, res) => {
+      try {
+        const requests = await donationRequestsCollection.find().toArray();
+        res.send({ success: true, data: requests });
+      } catch (error) {
+        console.error('❌ Error fetching donation requests:', error);
+        res.status(500).send({
+          success: false,
+          message: "Failed to fetch donation requests"
+        });
+      }
+    });
+
+    // ==================== GET DONATION REQUESTS BY EMAIL ====================
+    app.get('/donation-requests/user/:email', async (req, res) => {
+      try {
+        const email = req.params.email;
+        const requests = await donationRequestsCollection
+          .find({ requesterEmail: email })
+          .toArray();
+
+        res.send({ success: true, data: requests });
+      } catch (error) {
+        console.error('❌ Error fetching user donation requests:', error);
+        res.status(500).send({
+          success: false,
+          message: "Failed to fetch donation requests"
+        });
+      }
+    });
+
+    // ==================== GET SINGLE DONATION REQUEST ====================
+    app.get('/donation-requests/:id', async (req, res) => {
+      try {
+        const id = req.params.id;
+        const request = await donationRequestsCollection.findOne({ 
+          _id: new ObjectId(id) 
+        });
+
+        if (!request) {
+          return res.status(404).send({
+            success: false,
+            message: "Donation request not found"
+          });
+        }
+
+        res.send({ success: true, data: request });
+      } catch (error) {
+        console.error('❌ Error fetching donation request:', error);
+        res.status(500).send({
+          success: false,
+          message: "Failed to fetch donation request"
+        });
+      }
+    });
+
+    // ==================== UPDATE DONATION REQUEST ====================
+    app.put('/donation-requests/:id', async (req, res) => {
+      try {
+        const id = req.params.id;
+        const updatedData = req.body;
+
+        const result = await donationRequestsCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: updatedData }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).send({
+            success: false,
+            message: "Donation request not found"
+          });
+        }
+
+        res.send({
+          success: true,
+          message: "Donation request updated successfully"
+        });
+      } catch (error) {
+        console.error('❌ Error updating donation request:', error);
+        res.status(500).send({
+          success: false,
+          error: "Failed to update donation request"
+        });
+      }
+    });
+
+    // ==================== UPDATE DONATION REQUEST STATUS ====================
+    app.patch('/donation-requests/:id/status', async (req, res) => {
+      try {
+        const id = req.params.id;
+        const { status, donorName, donorEmail } = req.body;
+
+        const updateData = { status: status };
+        
+        // If status is changing to "inprogress", add donor information
+        if (status === 'inprogress' && donorName && donorEmail) {
+          updateData.donorName = donorName;
+          updateData.donorEmail = donorEmail;
+        }
+
+        const result = await donationRequestsCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: updateData }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).send({
+            success: false,
+            message: "Donation request not found"
+          });
+        }
+
+        res.send({
+          success: true,
+          message: `Request status updated to ${status}`
+        });
+      } catch (error) {
+        console.error('❌ Error updating request status:', error);
+        res.status(500).send({
+          success: false,
+          error: "Failed to update request status"
+        });
+      }
+    });
+
+    // ==================== DELETE DONATION REQUEST ====================
+    app.delete('/donation-requests/:id', async (req, res) => {
+      try {
+        const id = req.params.id;
+
+        const result = await donationRequestsCollection.deleteOne({
+          _id: new ObjectId(id)
+        });
+
+        if (result.deletedCount === 0) {
+          return res.status(404).send({
+            success: false,
+            message: "Donation request not found"
+          });
+        }
+
+        res.send({
+          success: true,
+          message: "Donation request deleted successfully"
+        });
+      } catch (error) {
+        console.error('❌ Error deleting donation request:', error);
+        res.status(500).send({
+          success: false,
+          error: "Failed to delete donation request"
         });
       }
     });
